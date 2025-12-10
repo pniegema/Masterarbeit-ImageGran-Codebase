@@ -24,6 +24,6 @@ Im Wesentlichen enthält das Repo:
 Für die Arbeit wurde folgendes verwendet:  
 
 - Python (Version 3.10 )  
-- Abhängigkeiten: siehe requirements.txt für ImageGran, das erstellen der pretrained Identity-Embeddings mittesl InsightFace benötigt Abhängigkeiten die nicht mit ImageGran kompatibel sind. Diese Abhängigkeiten sind in requirements_InsightFace.txt spezifiziert 
+- Abhängigkeiten: siehe requirements.txt für ImageGran, das Erstellen der pretrained Identity-Embeddings mittels InsightFace benötigt Abhängigkeiten die nicht mit ImageGran kompatibel sind. Diese Abhängigkeiten sind in requirements_InsightFace.txt spezifiziert 
 - Idealerweise eine GPU — für Training bzw. Inferenz mit neuronalen Netzen empfohlen  
 - In der Arbeit spezifizierte Downloads für Datensätze
