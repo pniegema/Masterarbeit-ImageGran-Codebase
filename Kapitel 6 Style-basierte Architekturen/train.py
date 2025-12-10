@@ -8,7 +8,7 @@ import numpy as np
 from models import HeatmapEncoder64, IdentityEncoder, StyleGenerator
 from utils import VGGPerceptualLoss, normalize_vgg
 from matplotlib import pyplot as plt
-from Hybrid_Datensatz import HybridDataset
+from Hybrid_Datensatz import Hybrid_Datensatz
 from torchvision import transforms
 from utils import show_debug_images
 
@@ -340,7 +340,7 @@ if __name__ == "__main__":
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])
 
-    dataset = HybridDataset(
+    dataset = Hybrid_Datensatz(
         root_dir=r"C:\Users\pnieg\Documents\HDTF\HDTF_dataset",
         transform=transform,
         min_frames=10,
