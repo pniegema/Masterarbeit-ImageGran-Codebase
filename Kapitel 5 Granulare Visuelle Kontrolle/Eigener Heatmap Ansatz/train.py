@@ -1,20 +1,25 @@
 import torch
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
-import time
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-import numpy as np
-from model import IdentityDecoder, PoseEncoder, IdentityEncoder, ExpressionEncoder, VisualEncoder
-from utils import VGGPerceptualLoss
-from matplotlib import pyplot as plt
-from Talking-Head-kH-Datensatz import TalkingHeadDataset
 from torchvision import transforms
-from utils import show_debug_images, normalize_vgg
-
 from torch.utils.data import DataLoader
+from Heatmap-Talking-Head-kH-Datensatz import TalkingHeadDataset
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+from model import (
+    IdentityDecoder, HeatmapEncoder64, IdentityEncoder
+)
+
+from utils import VGGPerceptualLoss, normalize_vgg
+from tqdm import tqdm
+import time
+from torch.cuda.amp import autocast, GradScaler
+import torch.profiler
+from utils import show_debug_images
+from matplotlib import pyplot as plt
+import numpy as np
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 
 
 def visualize_first_crop(img, landmarks):
@@ -134,8 +139,8 @@ class CustomLoss(torch.nn.Module):
 
 
 
-def train_visual(
-    identity_enc, pose_enc, expr_enc, visual_enc,
+def train_video(
+    identity_enc, pose_enc, expr_enc, vis_enc,
     G,
     opt_G,
     loader,
@@ -143,55 +148,48 @@ def train_visual(
     device='cuda'
 ):
     # ---- Move to device ----
-    modules = [identity_enc, pose_enc, expr_enc, visual_enc, G]
+    modules = [identity_enc, pose_enc, expr_enc, vis_enc, G]
     for m in modules: m.to(device)
-
 
     # ---- AMP ----
     scaler_G = GradScaler()
 
-    steps_per_epoch = len(loader)
 
 
     # ---- Logging buffers ----
-    l1_losses, vgg_losses, adv_losses, identity_losses, l1_mouth_losses = [], [], [], [], []
+    l1_losses, vgg_losses, adv_losses, identity_losses = [], [], [], []
     steps = []
     global_step = 0
 
-    # ---- Learning rate schedulers ----
-    scheduler_G = torch.optim.lr_scheduler.OneCycleLR(
-        opt_G,
-        max_lr=4e-4,
-        epochs=epochs,
-        steps_per_epoch=steps_per_epoch,
-        pct_start=0.3,
-        anneal_strategy='cos',
-        div_factor=25.0,
-        final_div_factor=1e4
+    l1_weight, adv_weight = 8.0, 0.3
+    l1_weight_mouth = 2.5 * l1_weight
+    perceptual_weight = 0.2
+    identity_weight = 1
+
+    loss_fn = CustomLoss(
+        identity_enc,
+        l1_weight=l1_weight,
+        perceptual_weight=perceptual_weight,
+        identity_weight=identity_weight,
+        mouth_l1_weight=l1_weight_mouth,
+        mouth_perceptual_weight=perceptual_weight
     )
+
+
 
     for epoch in range(epochs):
         # ---- Dynamic loss weights schedule ----
-        # if epoch < int(epochs/4):
-        #     l1_weight, adv_weight = 15.0, 0.05
-        # elif epoch < int(epochs/2):
-        #     l1_weight, adv_weight = 12.0, 0.1
-        # elif epoch < int(3*epochs/4):
-        #     l1_weight, adv_weight = 10.0, 0.2
-        # else:
-        l1_weight, adv_weight = 8.0, 0.3
-        l1_weight_mouth = 2.5 * l1_weight
-        perceptual_weight = 0.2
+        if epoch < 5:
+            l1_weight, adv_weight = 15.0, 0.05
+        elif epoch < 10:
+            l1_weight, adv_weight = 12.0, 0.1
+        elif epoch < 20:
+            l1_weight, adv_weight = 10.0, 0.2
+        else:
+            l1_weight, adv_weight = 8.0, 0.3
+        perceptual_weight = 0.15
         identity_weight = 1
 
-        loss_fn = CustomLoss(
-                    identity_enc,
-                    l1_weight=l1_weight,
-                    perceptual_weight=perceptual_weight,
-                    identity_weight=identity_weight,
-                    mouth_l1_weight=l1_weight_mouth,
-                    mouth_perceptual_weight=perceptual_weight
-                )
 
         epoch_start = time.time()
         loader_iter = tqdm(loader, desc=f"Epoch {epoch+1}/{epochs}", leave=False)
@@ -205,14 +203,13 @@ def train_visual(
             id_imgs     = batch['identity_frames'  ].to(device)  # (B,K,C,H,W)
             pose_i      = batch['driving_pose'     ].to(device)
             expr_i      = batch['driving_expression'].to(device)
-            visual_mouth_i = batch['driving_mouth_hm'    ].to(device)
+            mouth_i         = batch['driving_mouth'      ].to(device)
             driving_img = batch['driving_frame'    ].to(device)
-            landmarks_mouth   = batch['driving_landmarks'        ]['mouth'].to(device)  # (B, N, 2)
+            landmarks_mouth = batch['driving_landmarks']['mouth'].to(device)  # (B, N, 2)
             data_time = time.time() - t0
 
             # ---- Encode ----
             t0 = time.time()
-
             B, K, C, H, W = id_imgs.shape
             id_flat = id_imgs.view(B * K, C, H, W)
             id_lat = identity_enc(id_flat).view(B, K, -1)
@@ -221,8 +218,8 @@ def train_visual(
 
             pose_lat  = pose_enc(pose_i)
             expr_lat  = expr_enc(expr_i)
-            visual_lat = visual_enc(visual_mouth_i)
-            z = torch.cat([id_lat_mean, pose_lat, expr_lat, visual_lat], dim=1)
+            content_lat = vis_enc(mouth_i)
+            z = torch.cat([id_lat_mean, pose_lat, expr_lat, content_lat], dim=1)
             encoding_time = time.time() - t0
 
 
@@ -230,23 +227,21 @@ def train_visual(
             #   Generator
             # ==============
             t_gen_start = time.time()
+            G.train();
 
             with autocast():
                 fake = G(z)
-
 
             with autocast():
                 total_G_loss, l1_loss, percep_loss, identity_loss, mouth_l1 = loss_fn(
                     fake, driving_img, id_lat_mean, landmarks=landmarks_mouth
                 )
 
-
             opt_G.zero_grad(set_to_none=True)
             scaler_G.scale(total_G_loss).backward()
             scaler_G.step(opt_G)
             scaler_G.update()
-            if scheduler_G is not None:
-                scheduler_G.step()
+            scheduler_G.step()
 
             t_gen_total = time.time() - t_gen_start
             total_iter_time = time.time() - iter_start
@@ -262,7 +257,7 @@ def train_visual(
 
             if i < 3:
                 print(f"[Step {i}] DL={data_time:.2f}s, Enc={encoding_time:.2f}s, "
-                      f"Gen={t_gen_total:.2f}s, Total={total_iter_time:.2f}s")
+                      f" Gen={t_gen_total:.2f}s, Total={total_iter_time:.2f}s")
 
             # ---- Logging series ----
             if (i % 10) == 0:
@@ -270,19 +265,10 @@ def train_visual(
                 l1_losses.append(l1_loss.item() * l1_weight)
                 vgg_losses.append(percep_loss.item() * perceptual_weight)
                 identity_losses.append(identity_loss.item() * identity_weight)
-                l1_mouth_losses.append(mouth_l1.item() * l1_weight_mouth)
 
 
             # ---- Debug plots/images (optional) ----
-            if i % 500 == 0:
-                print(f"[Step {i}] G: {total_G_loss.item():.4f} | "
-                      f"L1: {l1_loss.item()*l1_weight:.4f} | "
-                      f"Perc: {percep_loss.item()*perceptual_weight:.4f}"
-                      f" | ID: {identity_loss.item()*identity_weight:.4f} | "
-                      f"Mouth L1: {mouth_l1.item()*l1_weight:.4f} | ")
-
-
-
+            if (i % 100) == 0:
 
                 with torch.no_grad():
                     show_debug_images(fake, driving_img, title=f"Epoch {epoch+1} Step {i}")
@@ -291,13 +277,13 @@ def train_visual(
                 id_lat_np    = to_numpy_float32(id_lat_mean[0])
                 pose_lat_np  = to_numpy_float32(pose_lat[0])
                 expr_lat_np  = to_numpy_float32(expr_lat[0])
-                visual_lat_np = to_numpy_float32(visual_lat[0])
+                audio_lat_np = to_numpy_float32(content_lat[0])
                 z_latent_np  = to_numpy_float32(z[0])
 
                 plt.figure(figsize=(10,6))
                 for idx,(arr,title) in enumerate([
                     (id_lat_np, "Identity"), (pose_lat_np, "Pose"),
-                    (expr_lat_np, "Expression"), (visual_lat_np, "Visual"),
+                    (expr_lat_np, "Expression"), (audio_lat_np, "Audio"),
                     (z_latent_np, "Fused z"),
                 ], start=1):
                     plt.subplot(2,3,idx); plt.title(title); plt.plot(arr); plt.xlabel("Index"); plt.ylabel("Value")
@@ -308,7 +294,6 @@ def train_visual(
                 plt.plot(l1_losses, label='L1 * w')
                 plt.plot(vgg_losses, label='Perceptual * w')
                 plt.plot(identity_losses, label='ID * w')
-                plt.plot(l1_mouth_losses, label='Mouth L1 * w')
                 plt.title(f"Losses - Epoch {epoch+1} Step {i}")
                 plt.xlabel("Logged step"); plt.ylabel("Value"); plt.legend(); plt.grid(); plt.show()
 
@@ -320,65 +305,65 @@ def train_visual(
             'identity_enc': identity_enc.state_dict(),
             'pose_enc': pose_enc.state_dict(),
             'expr_enc': expr_enc.state_dict(),
-            'visual_enc': visual_enc.state_dict(),
+            'vis_enc': vis_enc.state_dict(),
             'generator': G.state_dict(),
-            'opt_G': opt_G.state_dict()
-        }, f'weights/last_epoch.pth')
-
-        if epoch % 10 == 0:
-            torch.save({
-                'epoch': epoch + 1,
-                'identity_enc': identity_enc.state_dict(),
-                'pose_enc': pose_enc.state_dict(),
-                'expr_enc': expr_enc.state_dict(),
-                'visual_enc': visual_enc.state_dict(),
-                'generator': G.state_dict(),
-                'opt_G': opt_G.state_dict()
-            }, f'weights/epoch_{epoch+1}.pth')
+            'opt_G': opt_G.state_dict(),
+        }, f'weights_heatmap/checkpoint_epoch_{epoch+1}.pth')
 
 def to_numpy_float32(tensor):
     return tensor.detach().cpu().float().numpy()
 
 
 if __name__ == "__main__":
+
     transform = transforms.Compose([
-        transforms.Resize((256, 256)),  # Resize to model input size
+        transforms.Resize((64, 64)),  # Resize to model input size
         transforms.ToTensor(),  # scale to [0,1]
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # scale to [-1, 1]
     ])
 
     dataset = TalkingHeadDataset(
         root_dir=r"C:\Users\pnieg\Documents\Masterarbeit\TalkingHead-1KH\dataset",
-        heatmaps_dir=r"C:\Users\pnieg\Documents\Masterarbeit\TalkingHead-1KH\heatmaps",
         landmarks_dir=r"C:\Users\pnieg\Documents\Masterarbeit\TalkingHead-1KH\landmarks",
         transform=transform,
-        cache_file="dataset_cache_heatmap_test.pkl"
+        cache_file="dataset_cache_heatmap.pkl"
     )
 
-    dataloader = DataLoader(dataset, batch_size=32, num_workers=4,
-                            shuffle=True, pin_memory=True if device == 'cuda' else False, persistent_workers=True)
+    dataloader = DataLoader(dataset, batch_size=128, num_workers=4,
+                            shuffle=True, pin_memory=True if device == 'cuda' else False)
 
-    visual_enc = VisualEncoder(in_channels=3, latent_dim=256)
-    pose_enc = PoseEncoder(in_channels=3, latent_dim=12)
-    expression_enc = ExpressionEncoder(in_channels=3, latent_dim=256)
-    identity_enc = IdentityEncoder(in_channels=3, latent_dim=512)
-    G              = IdentityDecoder(input_dimension=1036)
+    #Initialize encoders and models
+    identity_enc = IdentityEncoder(in_channels=3, latent_dim=3).to(device)
+    pose_enc = HeatmapEncoder64(in_channels=47, latent_dim=128, first_layer_channels=64).to(device)
+    expr_enc = HeatmapEncoder64(in_channels=128, latent_dim=256, first_layer_channels=128).to(device)
+    vis_enc = HeatmapEncoder64(in_channels=66, latent_dim=256, first_layer_channels=128).to(device)
+    generator = IdentityDecoder(latent_dim=3+128+256+256, out_channels=3).to(device)
+
 
     opt_G = torch.optim.Adam(
-        list(G.parameters()) +
+        list(generator.parameters()) +
         list(identity_enc.parameters()) +
         list(pose_enc.parameters()) +
-        list(expression_enc.parameters()) +
-        list(visual_enc.parameters()),
+        list(expr_enc.parameters()) +
+        list(vis_enc.parameters()),
         lr=2e-4,
         betas=(0.5, 0.99)
     )
 
+    scheduler_G = torch.optim.lr_scheduler.ExponentialLR(opt_G, gamma=0.99)
 
-    train_visual(
-        identity_enc, pose_enc, expression_enc, visual_enc,
-        G,
+    train_video(
+        identity_enc=identity_enc,
+        pose_enc=pose_enc,
+        expr_enc=expr_enc,
+        vis_enc=vis_enc,
+        G=generator,
         opt_G=opt_G,
         loader=dataloader,
-        epochs=60,
-        device=device)
+        epochs=60,  # Adjust as needed
+        device=device
+    )
+
+
+
+
+
