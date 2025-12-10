@@ -3,7 +3,7 @@ import torch.nn as nn
 import torchvision.models as models
 from util import count_parameters
 from matplotlib import pyplot as plt
-from GRID import GRIDDataset, get_landmarks
+from GRID_Datensatz import GRIDDataset, get_landmarks
 from torch.utils.data import Dataset, DataLoader
 import time
 import torch.nn.functional as F
