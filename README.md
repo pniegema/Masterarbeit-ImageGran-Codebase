@@ -5,7 +5,7 @@ Codebasis zur Masterarbeit von Paul Erik Niegemann
 
 ---  
 
-## 📄 Inhalt  
+## Inhalt  
 
 Dieses Repository enthält den Code und relevante Scripts aus der Masterarbeit Building ImageGran: An Evolutionary Approach to High-Quality Talking Head Synthesis with Disentangled Control. Ziel der Arbeit war es, eine Methode zur hochqualitativen Talking-Head-Synthese zu entwickeln mit Fokus auf granulare visuelle Kontrolle.  
 
@@ -19,7 +19,7 @@ Im Wesentlichen enthält das Repo:
 
 ---  
 
-## ⚙️ Voraussetzungen  
+## Voraussetzungen  
 
 Für die Arbeit wurde folgendes verwendet:  
 
