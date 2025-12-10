@@ -1,0 +1,109 @@
+# =====================================
+# 🐍 Python allgemein
+# =====================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+develop-eggs/
+.installed.cfg
+.mypy_cache/
+.pytest_cache/
+.coverage
+*.cover
+*.log
+*.sqlite3
+
+# =====================================
+# 🔥 PyTorch & Deep Learning
+# =====================================
+# Modell-Checkpoints und Trainingsausgaben
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Trainingslogs
+logs/
+runs/
+lightning_logs/
+tensorboard/
+wandb/
+mlruns/
+checkpoints/
+experiments/
+outputs/
+results/
+samples/
+weights/
+
+# Temporäre Dateien vom Training
+*.tmp
+*.bak
+*.npy
+*.npz
+*.h5
+*.dat
+
+# =====================================
+# 🧠 Datensätze & Cache
+# =====================================
+data/
+datasets/
+cache/
+tmp/
+preprocessed/
+__data__/
+*.tar
+*.zip
+*.gz
+
+# =====================================
+# 💻 Virtuelle Umgebungen
+# =====================================
+venv/
+.venv/
+env/
+ENV/
+.Python
+
+# =====================================
+# 🧰 IDEs und Editoren
+# =====================================
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# =====================================
+# 🧾 OS-spezifische Dateien
+# =====================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =====================================
+# 📒 Jupyter / Notebooks
+# =====================================
+.ipynb_checkpoints/
+
+# =====================================
+# 🔐 Lokale Einstellungen & Umgebungsvariablen
+# =====================================
+.env
+*.env
+*.ini
+*.cfg
+config.json
+/weights_skip/
+/weights_heatmap/
+/weights_claude/
+/weights_64/
+/trained_weigths/
